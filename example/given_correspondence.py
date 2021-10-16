@@ -4,7 +4,7 @@ import sys
 import os
 import time
 sys.path.append(os.path.abspath('.'))
-import uvtransfer
+import textrans
 
 if __name__ == '__main__':
     data_dir = os.path.join('data', 'given_correspondence')
@@ -12,11 +12,11 @@ if __name__ == '__main__':
     src_tex_path = os.path.join(data_dir, "bunny_textured_charts.png")
     dst_obj_path = os.path.join(data_dir, "bunny.obj")
     dst_tex_path = os.path.join(data_dir, "bunny.png")
-    _, src_uvs, _, _, src_uvIDs, _, _ = uvtransfer.loadObj(src_obj_path)
-    _, dst_uvs, _, _, dst_uvIDs, _, _ = uvtransfer.loadObj(dst_obj_path)
+    _, src_uvs, _, _, src_uvIDs, _, _ = textrans.loadObj(src_obj_path)
+    _, dst_uvs, _, _, dst_uvIDs, _, _ = textrans.loadObj(dst_obj_path)
     src_tex = cv2.imread(src_tex_path)
     # Copy and paste texture colors to dst uv space
-    dst_tex, dst_mask = uvtransfer.transfer(src_uvs, src_uvIDs, src_tex, dst_uvs,
+    dst_tex, dst_mask = textrans.transfer(src_uvs, src_uvIDs, src_tex, dst_uvs,
                                             dst_uvIDs,
                                             512, 512, super_sample=2.0)
     # To erase bleeding on boundaries of uv,

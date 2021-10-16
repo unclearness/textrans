@@ -1,5 +1,5 @@
-# uvtransfer: python uv texture transfer tool
-**uvtransfer** provides useful functions to transfer texture color to another UV space
+# textrans: python uv texture transfer tool
+**textrans** provides useful functions to transfer texture values to another UV space.
 
 
 ## Try
