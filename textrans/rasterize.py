@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 import scipy.spatial as ss
-
+from textrans import util
 
 def U2X(u, w):
     return u * w - 0.5
@@ -162,36 +162,42 @@ def calcClosestSurfaceInfo(tree, dst_pos, src_verts, src_verts_faces,
     min_dist = 99999999999999999.99
     min_signed_dist = None
     min_index = None
+    min_bary = None
     for index in indices:
         plane = src_face_planes[index]
         # point-plane distance |ax'+by'+cz'+d|
         signed_dist = dst_pos.dot(plane[:3]) + plane[3]
         dist = np.abs(signed_dist)
         if dist < min_dist:
+            foot = - signed_dist * plane[:3] + dst_pos
+            foot_dist = foot.dot(plane[:3]) + plane[3]
+            if np.abs(foot_dist) > 0.0001:
+                print("wrong dist ", foot, foot_dist)
+                raise Exception()
+            # Calc barycentric of the crossing point
+            svface = src_verts_faces[index]
+            sv0 = src_verts[svface[0]]
+            sv1 = src_verts[svface[1]]
+            sv2 = src_verts[svface[2]]
+            area = triArea(sv0, sv1, sv2)
+            inv_area = 1.0 / area
+            w0 = triArea(sv1, sv2, foot) * inv_area
+            w1 = triArea(sv2, sv0, foot) * inv_area
+            w2 = triArea(sv0, sv1, foot) * inv_area
+            if w0 < 0 or w1 < 0 or w2 < 0 or 1 < w0 or 1 < w1 or 1 < w2:
+                continue
+            if np.abs(w0 + w1 + w2 - 1.0) > 0.1:
+                #print(np.abs(w0 + w1 + w2 - 1.0), (w0, w1, w2))
+                continue
             min_dist = dist
             min_signed_dist = signed_dist
             min_index = index
-    # Get crossing point as foot of a perpendicular line
-    min_plane = src_face_planes[min_index]
-    foot = - min_signed_dist * min_plane[:3] + dst_pos
-    foot_dist = foot.dot(min_plane[:3]) + min_plane[3]
-    if np.abs(foot_dist) > 0.0001:
-        print("wrong dist ", foot, foot_dist)
-        raise Exception()
-    # Calc barycentric of the crossing point
-    svface = src_verts_faces[min_index]
-    sv0 = src_verts[svface[0]]
-    sv1 = src_verts[svface[1]]
-    sv2 = src_verts[svface[2]]
-    area = triArea(sv0, sv1, sv2)
-    inv_area = 1.0 / area
-    w0 = triArea(sv1, sv2, foot) * inv_area
-    w1 = triArea(sv2, sv0, foot) * inv_area
-    w2 = triArea(sv0, sv1, foot) * inv_area
-    if w0 < 0 or w1 < 0 or w2 < 0 or 1 < w0 or 1 < w1 or 1 < w2:
-        print("warn: closest point is outside of triangle", (w0, w1, w2))
-    w2 = 1- w0 - w1
-    return foot, min_signed_dist, min_dist, min_index, (w0, w1, w2)
+            min_bary = (w0, w1, w2)
+    #w2 = 1- w0 - w1
+    #
+    # 
+    # print(min_bary)
+    return foot, min_signed_dist, min_dist, min_index, min_bary
 
 
 def transferWithoutCorrespondence(src_uvs, src_uv_faces, src_verts,
@@ -199,7 +205,7 @@ def transferWithoutCorrespondence(src_uvs, src_uv_faces, src_verts,
                                   dst_uvs, dst_uv_faces, dst_verts,
                                   dst_vert_faces,
                                   dst_tex_h, dst_tex_w,
-                                  super_sample=2.0, nn_num=3):
+                                  super_sample=1.0, nn_num=10):
     dst_tex, dst_mask, dst_tex_size, dst_tex_h_, dst_tex_w_,\
         src_h, src_w, super_sample = transferCommonProcess(src_tex,
                                                            dst_tex_h,
@@ -208,6 +214,7 @@ def transferWithoutCorrespondence(src_uvs, src_uv_faces, src_verts,
     # Prepare KD Tree for src face centers
     src_face_centroids, src_face_planes = computeFaceInfo(
         src_verts, src_verts_faces)
+    util.saveObj("tmp.obj", src_face_centroids, [], [], [], [], [], [])
     tree = ss.KDTree(src_face_centroids)
     nn_fid_tex = np.zeros((dst_tex_h_, dst_tex_w_), dtype=np.int)
     nn_pos_tex = np.zeros((dst_tex_h_, dst_tex_w_, 3), dtype=np.float)
@@ -253,6 +260,8 @@ def transferWithoutCorrespondence(src_uvs, src_uv_faces, src_verts,
                     min_index, bary = calcClosestSurfaceInfo(
                         tree, dpos, src_verts, src_verts_faces,
                         src_face_planes, nn_num)
+                if min_index is None:
+                    continue
                 nn_fid_tex[j, i] = min_index
                 nn_pos_tex[j, i] = foot
                 nn_bary_tex[j, i] = bary
@@ -265,12 +274,12 @@ def transferWithoutCorrespondence(src_uvs, src_uv_faces, src_verts,
                 suv = bary[0] * suv0 + bary[1] * suv1 + bary[2] * suv2
 
                 # Calc pixel pos in src tex
-                sx = U2X(suv[0], src_w)
-                sy = V2Y(suv[1], src_h)
+                sx = np.clip(U2X(suv[0], src_w), 0, src_w - 1 - 0.001)
+                sy = np.clip(V2Y(suv[1], src_h), 0, src_h - 1 - 0.001)
                 #print(suv, sx, sy)
                 # Fetch and copy to dst tex
                 src_color = bilinearInterpolation(sx, sy, src_tex)
-                # src_color = src_tex[int(sy), int(sx)]
+                #src_color = src_tex[int(sy), int(sx)]
                 # src_color = np.clip(src_color, 0, 255)
                 dst_tex[j, i] = src_color.astype(src_tex.dtype)
                 dst_mask[j, i] = 255
