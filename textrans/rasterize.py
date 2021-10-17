@@ -48,7 +48,12 @@ def edgeFunction(a, b, c):
 
 
 def triArea(a, b, c):
-    return 0.5 * np.linalg.norm(np.cross((b - a), (c - a)))
+    eps = 1e-10
+    v0 = (b - a)
+    v1 = (c - a)
+    if np.linalg.norm(v0) < eps or np.linalg.norm(v1) < eps:
+        return eps * 0.001
+    return 0.5 * np.linalg.norm(np.cross(v0, v1))
 
 
 def transferCommonProcess(src_tex, dst_tex_h, dst_tex_w, super_sample):
@@ -153,6 +158,89 @@ def computeFaceInfo(verts, vert_faces):
     return face_centroids, face_planes
 
 
+def IsPoint3dInsideTriangle(p, v0, v1, v2, eps=0.01):
+    area = triArea(v0, v1, v2)
+    inv_area = 1.0 / area
+    w0 = triArea(v1, v2, p) * inv_area
+    w1 = triArea(v2, v0, p) * inv_area
+    w2 = triArea(v0, v1, p) * inv_area
+    if w0 < 0 or w1 < 0 or w2 < 0 or 1 < w0 or 1 < w1 or 1 < w2:
+        return False, (w0, w1, w2)
+    if np.abs(w0 + w1 + w2 - 1.0) > eps:
+        return False, (w0, w1, w2)
+    return True, (w0, w1, w2)
+
+# https://github.com/facebookresearch/pytorch3d/blob/14dd2611eeda6d0f4b43a3cadf90ef3c64eb1d0f/pytorch3d/renderer/mesh/rasterize_meshes.py#L755
+
+def point_line_distance(p, v0, v1, kEpsilon = 1e-8):
+    """
+    Return minimum distance between line segment (v1 - v0) and point p.
+    Args:
+        p: Coordinates of a point.
+        v0, v1: Coordinates of the end points of the line segment.
+    Returns:
+        non-square distance to the boundary of the triangle.
+    Consider the line extending the segment - this can be parameterized as
+    ``v0 + t (v1 - v0)``.
+    First find the projection of point p onto the line. It falls where
+    ``t = [(p - v0) . (v1 - v0)] / |v1 - v0|^2``
+    where . is the dot product.
+    The parameter t is clamped from [0, 1] to handle points outside the
+    segment (v1 - v0).
+    Once the projection of the point on the segment is known, the distance from
+    p to the projection gives the minimum distance to the segment.
+    """
+    if p.shape != v0.shape != v1.shape:
+        raise ValueError("All points must have the same number of coordinates")
+
+    v1v0 = v1 - v0
+    l2 = v1v0.dot(v1v0)  # |v1 - v0|^2
+    if l2 <= kEpsilon:
+        return (p - v1).dot(p - v1)  # v0 == v1
+
+    t = v1v0.dot(p - v0) / l2
+    t = np.clip(t, 0.0, 1.0)
+    p_proj = v0 + t * v1v0
+    delta_p = p_proj - p
+    return delta_p.dot(delta_p), p_proj
+
+
+def point_triangle_distance(p, v0, v1, v2):
+    """
+    Return shortest distance between a point and a triangle.
+    Args:
+        p: Coordinates of a point.
+        v0, v1, v2: Coordinates of the three triangle vertices.
+    Returns:
+        shortest absolute distance from the point to the triangle.
+    """
+    if p.shape != v0.shape != v1.shape != v2.shape:
+        raise ValueError("All points must have the same number of coordinates")
+
+    e01_dist, p_proj01 = point_line_distance(p, v0, v1)
+    e02_dist, p_proj02 = point_line_distance(p, v0, v2)
+    e12_dist, p_proj12 = point_line_distance(p, v1, v2)
+    dists = [e01_dist, e02_dist, e12_dist]
+    projs = [p_proj01, p_proj02, p_proj12]
+    min_index = np.argmin(dists)
+    return dists[min_index], projs[min_index]
+    # print(e01_dist, e02_dist, e12_dist)
+    # edge_dists_min = np.min(np.min(e01_dist, e02_dist), e12_dist)
+
+    # if edge_dists_min == e01_dist:
+    #     return e01_dist, p_proj01
+    # elif edge_dists_min == e02_dist:
+    #     return e02_dist, p_proj02
+
+    # return e12_dist, p_proj12
+
+
+# def distancePoint2Line(dst_pos, line_pos_list):
+#     direc = normalize(line_pos_list[0] - line_pos_list[1])
+#     foot = line_pos_list[0] + ((dst_pos - line_pos_list[0]).dot(direc)) * direc
+#     return np.linalg.norm(foot - dst_pos), foot
+
+
 def calcClosestSurfaceInfo(tree, dst_pos, src_verts, src_verts_faces,
                            src_face_planes, nn_num):
     # Get the closest src face
@@ -164,39 +252,58 @@ def calcClosestSurfaceInfo(tree, dst_pos, src_verts, src_verts_faces,
     min_index = None
     min_bary = None
     for index in indices:
+        svface = src_verts_faces[index]
+        sv0 = src_verts[svface[0]]
+        sv1 = src_verts[svface[1]]
+        sv2 = src_verts[svface[2]]
+        # Case 1: foot of perpendicular line is inside of target triangle
         plane = src_face_planes[index]
         # point-plane distance |ax'+by'+cz'+d|
         signed_dist = dst_pos.dot(plane[:3]) + plane[3]
         dist = np.abs(signed_dist)
-        if dist < min_dist:
-            foot = - signed_dist * plane[:3] + dst_pos
-            foot_dist = foot.dot(plane[:3]) + plane[3]
-            if np.abs(foot_dist) > 0.0001:
-                print("wrong dist ", foot, foot_dist)
-                raise Exception()
-            # Calc barycentric of the crossing point
-            svface = src_verts_faces[index]
-            sv0 = src_verts[svface[0]]
-            sv1 = src_verts[svface[1]]
-            sv2 = src_verts[svface[2]]
-            area = triArea(sv0, sv1, sv2)
-            inv_area = 1.0 / area
-            w0 = triArea(sv1, sv2, foot) * inv_area
-            w1 = triArea(sv2, sv0, foot) * inv_area
-            w2 = triArea(sv0, sv1, foot) * inv_area
-            if w0 < 0 or w1 < 0 or w2 < 0 or 1 < w0 or 1 < w1 or 1 < w2:
-                continue
-            if np.abs(w0 + w1 + w2 - 1.0) > 0.1:
-                #print(np.abs(w0 + w1 + w2 - 1.0), (w0, w1, w2))
-                continue
+        foot = - signed_dist * plane[:3] + dst_pos
+        foot_dist = foot.dot(plane[:3]) + plane[3]
+        if np.abs(foot_dist) > 0.0001:
+            print("wrong dist ", foot, foot_dist)
+            raise Exception()
+        # Calc barycentric of the crossing point
+        isInside, bary = IsPoint3dInsideTriangle(foot, sv0, sv1, sv2)
+        if dist < min_dist and isInside:
             min_dist = dist
             min_signed_dist = signed_dist
             min_index = index
-            min_bary = (w0, w1, w2)
+            min_bary = bary
+            # No need to check boundary lines
+            continue
+        if isInside:
+            # foot should be best. No need to check further
+            continue
+        # Case 2: foot of perpendicular line is outside of the triangle
+        # Check distance to boundary lines of triangle
+        lines = [(sv0, sv1), (sv1, sv2), (sv2, sv0)]
+        for line in lines:
+            #dist, lfoot = distancePoint2Line(dst_pos, line)
+            dist, lfoot = point_triangle_distance(dst_pos, sv0, sv1, sv2)
+            isInside, bary = IsPoint3dInsideTriangle(lfoot, sv0, sv1, sv2)
+            if not isInside:
+                bary = np.clip(bary, 0.0, 1.0)
+                # print("not inside", bary)
+            # else:
+            #     print("inside", bary)
+            if dist < min_dist and isInside:
+                min_dist = dist
+                min_signed_dist = None
+                min_index = index
+                min_bary = bary
+                # No need to check other boundary lines
+                break
+
     #w2 = 1- w0 - w1
     #
     # 
     # print(min_bary)
+    if min_index is None:
+        print(np.abs(w0 + w1 + w2 - 1.0), (w0, w1, w2))
     return foot, min_signed_dist, min_dist, min_index, min_bary
 
 
@@ -205,7 +312,7 @@ def transferWithoutCorrespondence(src_uvs, src_uv_faces, src_verts,
                                   dst_uvs, dst_uv_faces, dst_verts,
                                   dst_vert_faces,
                                   dst_tex_h, dst_tex_w,
-                                  super_sample=1.0, nn_num=10):
+                                  super_sample=1.0, nn_num=3):
     dst_tex, dst_mask, dst_tex_size, dst_tex_h_, dst_tex_w_,\
         src_h, src_w, super_sample = transferCommonProcess(src_tex,
                                                            dst_tex_h,
@@ -214,7 +321,7 @@ def transferWithoutCorrespondence(src_uvs, src_uv_faces, src_verts,
     # Prepare KD Tree for src face centers
     src_face_centroids, src_face_planes = computeFaceInfo(
         src_verts, src_verts_faces)
-    util.saveObj("tmp.obj", src_face_centroids, [], [], [], [], [], [])
+    #util.saveObj("tmp.obj", src_face_centroids, [], [], [], [], [], [])
     tree = ss.KDTree(src_face_centroids)
     nn_fid_tex = np.zeros((dst_tex_h_, dst_tex_w_), dtype=np.int)
     nn_pos_tex = np.zeros((dst_tex_h_, dst_tex_w_, 3), dtype=np.float)
@@ -261,6 +368,9 @@ def transferWithoutCorrespondence(src_uvs, src_uv_faces, src_verts,
                         tree, dpos, src_verts, src_verts_faces,
                         src_face_planes, nn_num)
                 if min_index is None:
+                    dst_tex[j, i] = [255, 0, 0]
+                    dst_mask[j, i] = 125
+                    print("min_index is None", j, i)
                     continue
                 nn_fid_tex[j, i] = min_index
                 nn_pos_tex[j, i] = foot
