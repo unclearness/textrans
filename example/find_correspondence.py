@@ -27,7 +27,7 @@ if __name__ == '__main__':
         if 1 < uv[0]:
             uv[0] = uv[0] - 1.0
         updated_src_uvs.append(uv)
-    
+
     src_uvs = updated_src_uvs
     # Copy and paste texture colors to dst uv space
     start_t = time.time()
@@ -36,21 +36,29 @@ if __name__ == '__main__':
         src_vertIDs, src_tex,
         dst_uvs, dst_uvIDs, dst_verts,
         dst_vertIDs,
-        256, 256)
+        1024, 1024)
     end_t = time.time()
-    print("transferWithoutCorrespondence", '{:.2f}'.format(end_t - start_t), "sec")
+    print("transferWithoutCorrespondence",
+          '{:.2f}'.format(end_t - start_t), "sec")
     # To erase bleeding on boundaries of uv,
     # apply inpaint (alternately, color dilation would also work)
     start_t = time.time()
     inpaint_mask = np.bitwise_not(dst_mask)
     inpaint_mask = cv2.dilate(
-        inpaint_mask, np.ones((3, 3), np.uint8), iterations=2)
+        inpaint_mask, np.ones((3, 3), np.uint8), iterations=1)
     dst_tex_inpainted = cv2.inpaint(
         dst_tex, inpaint_mask, 3, cv2.INPAINT_TELEA)
     print("inpaint", '{:.2f}'.format(end_t - start_t), "sec")
     cv2.imwrite(dst_tex_path + ".png", dst_tex_inpainted)
     cv2.imwrite(dst_tex_path + "_org.png", dst_tex)
     cv2.imwrite(dst_tex_path + "_mask.png", dst_mask)
-    cv2.imwrite(dst_tex_path + "_fid.png", nn_fid_tex)
-    cv2.imwrite(dst_tex_path + "_pos.png", nn_pos_tex)
-    cv2.imwrite(dst_tex_path + "_bary.png", nn_bary_tex)
+    nn_fid_tex_vis = (nn_fid_tex / len(src_vertIDs) * 255).astype(np.uint8)
+    cv2.imwrite(dst_tex_path + "_fid.png", nn_fid_tex_vis)
+    pos_max = np.max(nn_pos_tex, axis=(0, 1))
+    pos_min = np.amin(nn_pos_tex, axis=(0, 1))
+    nn_pos_tex_vis = ((nn_pos_tex - pos_min) /
+                      (pos_max - pos_min) * 255).astype(np.uint8)
+    cv2.imwrite(dst_tex_path + "_pos.png", nn_pos_tex_vis)
+    nn_bary_tex_vis = (nn_bary_tex * 255).astype(np.uint8)
+    nn_bary_tex_vis[..., 2] = 0
+    cv2.imwrite(dst_tex_path + "_bary.png", nn_bary_tex_vis)
