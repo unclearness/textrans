@@ -1,0 +1,6 @@
+[submodule "cpp/third_party/cxxopts"]
+	path = cpp/third_party/cxxopts
+	url = https://github.com/jarro2783/cxxopts.git
+[submodule "cpp/third_party/ugu"]
+	path = cpp/third_party/ugu
+	url = https://github.com/unclearness/ugu.git
