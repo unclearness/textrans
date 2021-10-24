@@ -15,16 +15,24 @@
 namespace {
 
 std::string Path2Dir(const std::string& path) {
-  std::string::size_type pos = 0;
+  std::string::size_type pos = std::string::npos;
   const std::string::size_type unix_pos = path.find_last_of('/');
   const std::string::size_type windows_pos = path.find_last_of('\\');
   if (unix_pos != std::string::npos) {
-    pos = std::max(pos, unix_pos);
+    if (pos == std::string::npos) {
+      pos = unix_pos;
+    } else {
+      pos = std::max(pos, unix_pos);
+    }
   }
   if (windows_pos != std::string::npos) {
-    pos = std::max(pos, windows_pos);
+    if (pos == std::string::npos) {
+      pos = windows_pos;
+    } else {
+      pos = std::max(pos, unix_pos);
+    }
   }
-  return (pos == std::string::npos) ? std::string() : path.substr(0, pos + 1);
+  return (pos == std::string::npos) ? "./" : path.substr(0, pos + 1);
 }
 
 std::string GetExt(const std::string& path) {
@@ -51,19 +59,13 @@ cv::Mat3f LoadTex(const std::string& path) {
       "8bit uint8 3ch/4ch");
 }
 #else
-cv::Mat3f LoadTex(const std::string& path) {
-  cv::Mat tmp = cv::imread(path, -1);
+ugu::Image3f LoadTex(const std::string& path) {
+  ugu::Image3b tmp = ugu::imread<ugu::Image3b>(path, -1);
+  ugu::Image3f tmp_f;
 
-  if (tmp.type() == CV_32FC3) {
-    return tmp;
-  }
+  ugu::ConvertTo(tmp, &tmp_f);
 
-  if (tmp.type() == CV_8UC3 || tmp.type() == CV_8UC4) {
-    tmp.clone().convertTo(tmp, CV_32FC3);
-    return tmp;
-  }
-
-  throw std::runtime_error("Input texture format is not supported");
+  return tmp_f;
 }
 #endif
 
@@ -75,9 +77,10 @@ void SaveFloatAndUint8Image(const std::string& out_basename,
   if (is_float_input) {
     ugu::imwrite(out_basename + ext, org);
     std::string out_path = out_basename + "_vis.png";
+    ugu::imwrite(out_path, vis);
+  } else {
+    ugu::imwrite(out_path, vis);
   }
-
-  ugu::imwrite(out_path, vis);
 }
 
 }  // namespace
@@ -172,11 +175,14 @@ int main(int argc, char* argv[]) {
   std::string out_basename = out_dir + "/" + basename;
   // ugu::Image3b dst_tex_vis;
   // ugu::ConvertTo(output.dst_tex, &dst_tex_vis);
-  ugu::imwrite(out_basename + src_ext, output.dst_tex);
+  // ugu::imwrite(out_basename + src_ext, output.dst_tex);
 
   ugu::Image3b dst_tex_vis;
-  ugu::ConvertTo(output.dst_tex, &dst_tex_vis, 255.f);
-
+  if (is_float_input) {
+    ugu::ConvertTo(output.dst_tex, &dst_tex_vis, 255.f);
+  } else {
+    ugu::ConvertTo(output.dst_tex, &dst_tex_vis, 1.f);
+  }
   SaveFloatAndUint8Image(out_basename, src_ext, output.dst_tex, is_float_input,
                          dst_tex_vis);
 
@@ -190,8 +196,11 @@ int main(int argc, char* argv[]) {
                  ugu::InpaintMethod::NAIVE);
 
     ugu::Image3b dst_tex_inpainted_vis;
-    ugu::ConvertTo(dst_tex_inpainted, &dst_tex_inpainted_vis, 255.f);
-
+    if (is_float_input) {
+      ugu::ConvertTo(dst_tex_inpainted, &dst_tex_inpainted_vis, 255.f);
+    } else {
+      ugu::ConvertTo(dst_tex_inpainted, &dst_tex_inpainted_vis, 1.f);
+    }
     SaveFloatAndUint8Image(out_basename + "_inpainted", src_ext,
                            dst_tex_inpainted, is_float_input,
                            dst_tex_inpainted_vis);
@@ -200,7 +209,11 @@ int main(int argc, char* argv[]) {
   if (verbose) {
     ugu::imwrite(out_basename + "_mask.png", output.dst_mask);
 
+#ifdef UGU_USE_OPENCV
     std::string additional_info_raw_ext = ".exr";
+#else
+    std::string additional_info_raw_ext = ".bin";
+#endif
 
     ugu::Image3b srcpos_tex_vis =
         ugu::ColorizeImagePosMap(output.srcpos_tex, src_tex.cols, src_tex.rows);
