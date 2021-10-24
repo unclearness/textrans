@@ -175,7 +175,7 @@ int main(int argc, char* argv[]) {
   ugu::imwrite(out_basename + src_ext, output.dst_tex);
 
   ugu::Image3b dst_tex_vis;
-  ugu::ConvertTo(output.dst_tex, &dst_tex_vis);
+  ugu::ConvertTo(output.dst_tex, &dst_tex_vis, 255.f);
 
   SaveFloatAndUint8Image(out_basename, src_ext, output.dst_tex, is_float_input,
                          dst_tex_vis);
@@ -184,9 +184,17 @@ int main(int argc, char* argv[]) {
     ugu::Image1b inpaint_mask;
     ugu::Not(output.dst_mask, &inpaint_mask);
     // ugu::Dilate(inpaint_mask.clone(), &inpaint_mask, 3);
-    ugu::Image3b dst_tex_vis_inpainted = dst_tex_vis.clone();
-    ugu::Inpaint(inpaint_mask, dst_tex_vis_inpainted, 3.f);
-    ugu::imwrite(out_basename + "_inpainted.png", dst_tex_vis_inpainted);
+    ugu::Image3f dst_tex_inpainted = output.dst_tex.clone();
+
+    ugu::Inpaint(inpaint_mask, dst_tex_inpainted, 3.f,
+                 ugu::InpaintMethod::NAIVE);
+
+    ugu::Image3b dst_tex_inpainted_vis;
+    ugu::ConvertTo(dst_tex_inpainted, &dst_tex_inpainted_vis, 255.f);
+
+    SaveFloatAndUint8Image(out_basename + "_inpainted", src_ext,
+                           dst_tex_inpainted, is_float_input,
+                           dst_tex_inpainted_vis);
   }
 
   if (verbose) {
