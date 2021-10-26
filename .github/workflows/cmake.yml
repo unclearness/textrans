@@ -20,8 +20,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: Install OpenCV
-      uses: ./ # Uses an action in the root directory
+    - uses: Dovyski/setup-opencv-action@v1
       with:
         opencv-version: '4.0.0'
 
